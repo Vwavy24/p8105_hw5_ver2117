@@ -1,0 +1,259 @@
+---
+title: "p8105_hw5_ver2117"
+author: "Varvy Rousseau"
+date: "2022-11-15"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Loading relevant packages & settings
+```{r}
+library(tidyverse)
+library(stringr)
+library(tidyr)
+
+knitr::opts_chunk$set(
+	  echo = TRUE,
+	  warning = FALSE,
+	  fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+  )
+  
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis")
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+```
+
+#Problem 2
+#Loading in the homicide data
+```{r}
+homi_df = read.csv("homicide-data.csv") 
+
+```
+#Describe the raw dataset
+This dataset contains data on homicides in 50 large U.S. cities gathered by the Washington Post. Important variables include uid, reported_date, victim_last, victim_first,victim_race, age, victim_sex, city, state, lat, lon, and disposition.  There are `r nrow(homi_df)` row and `r ncol(homi_df)` columns in this dataset. We will focus on the unsolved homicides throughout major cities in the U.S. Another note is that this data is clean and that it does not need to be cleaned any further.  Also there is an error in one of the city and state columns.  There is no city named Tulsa in AL, and Tulsa is located in OK.  
+
+
+
+#Creating city_state varibale and summarize within the cities the number of total homicides and the number of unsolved homicides
+```{r}
+homi_df = homi_df %>%
+  mutate(
+    city_state = paste(city, state, sep = ",")) %>%
+    select(-city, -state) %>%
+  mutate(
+    disposition = sapply(disposition, switch,
+                       "Closed without arrest" = "unsolved",
+                       "Open/No arrest" = "unsolved",
+                       "Closed by arrest" = "solved")) %>%
+  relocate(city_state, .after = victim_sex) %>%
+  filter(city_state != "Tulsa,AL")
+ 
+ 
+
+homi_df
+
+city_homi = homi_df %>%
+  group_by(city_state) %>%
+  summarise(
+    Unsolved_Homicides = sum(disposition == "unsolved"),
+    Total_Murders = n())
+
+
+city_homi
+```
+
+
+#For Baltimore,MD is the prop.test function to estimtae the proportion of homicides that are unsolved; save the output of prop.test as an R object, apply the broom:: tidy to this object and pull the estimated proportion and condfidence interbals from the resulting tidy dataframe
+
+```{r}
+Bmore_t = 
+  prop.test(
+  city_homi %>% filter(city_state == "Baltimore,MD") %>% pull(Unsolved_Homicides),
+  city_homi %>% filter(city_state == "Baltimore,MD") %>% pull(Total_Murders)) %>% broom::tidy() %>% knitr::kable(digits = 4)
+
+Bmore_t
+
+```
+
+#Running prop.test for each of the cities in my dataset and extract both the proportion of unsolved homicides and the confidence intervals for each. this within a “tidy” pipeline, making use of purrr::map, purrr::map2, list columns and unnest as necessary to create a tidy dataframe with estimated proportions and CIs for each city.
+
+```{r}
+city_df = city_homi %>%
+  mutate(
+    pc_test = map2(.x = Unsolved_Homicides, .y = Total_Murders, ~prop.test(x = .x, n = .y)),
+    tt_test = map(.x = pc_test, ~broom::tidy(.x))
+  ) %>%
+  select(-pc_test) %>%
+  unnest(tt_test) %>%
+  select(city_state, estimate, conf.high, conf.low)
+
+city_df
+
+```
+
+#Creating the plot that shows the estimates and CIs for each city – check out geom_errorbar for a way to add error bars based on the upper and lower limits. Organize cities according to the proportion of unsolved homicides.
+
+```{r}
+Homi_plot = 
+city_df %>%
+  mutate(
+    city_state = fct_reorder(city_state, estimate)) %>%
+  ggplot(aes(x = city_state, y = estimate)) +
+  geom_point() + geom_errorbar(aes(ymin =conf.low, ymax = conf.high )) +
+  theme(axis.title = element_text(angle = 90, vjust = 0.5, hjust = 1)) + labs(
+    x = "City,State" , y = "Estimates of Cities", title = "The Estimates of Unsolved Homicides in Major Cities of U.S. States")
+
+Homi_plot
+
+
+
+
+```
+
+
+
+#Problem 3
+
+# First set the following design elements:
+
+#Fix n=30
+#Fix σ=5
+#Set μ=0. Generate 5000 datasets from the model
+
+#x∼Normal[μ,σ]
+
+#For each dataset, save μ̂  and the p-value arising from a test of H:μ=0 using α=0.05. Hint: to obtain the estimate and p-value, use broom::tidy to clean the output of t.test.
+```{r}
+
+func_sim = function(n = 30, mu = 0, sigma = 5) {
+  sim_df = x = rnorm(n, mean = mu, sd = sigma)
+  n3_ttest = t.test(sim_df, conf.int = 0.95) %>% broom::tidy()
+                    
+  n3_ttest
+  
+}
+
+prob3_out = vector("list", 5000)
+
+for (i in 5000) {
+  prob3_out[[i]] = func_sim ()
+}
+
+prob3_out %>% bind_rows() %>% head()
+```
+
+
+#Repeat the above for μ={1,2,3,4,5,6}, and complete the following:
+
+#Make a plot showing the proportion of times the null was rejected (the power of the test) on the y axis and the true value of μ on the x axis. Describe the association between effect size and power.
+
+```{r}
+
+sim_plot = function(set) {
+  prob3_out = vector("list", 5000)
+  for (i in 1:5000) {
+    prob3_out[[i]] = func_sim(mu = set)
+  }
+  powa = 
+    prob3_out %>%
+    bind_rows () %>%
+    select(estimate, p.value) %>%
+    filter(p.value < 0.05) %>%
+    count()
+  
+  powa
+}
+
+powa_test = 
+  tibble(
+    mu_samp = c(1, 2, 3, 4, 5, 6),
+    n_reject = map(mu_samp, sim_plot)
+  ) %>%
+  unnest(n_reject) %>%
+  mutate(
+    powa_t = n/5000)
+
+
+powa_test %>%
+  ggplot(aes(x = mu_samp, y = powa_t)) +
+  geom_smooth(alpha = 0.5, size = 0.5) +
+  labs( x = "The True Value of μ", y =  "The Proportion of Times the Null was Rejected (The Power of the Test)",
+        title = "The Association Between Effect Size and Power")
+
+```
+Describe the association between effect size and power.
+
+As the true value of μ increases, the effect size increases.  It also looks like the effect size is remains constant at one once the true value of μ is at 4.
+
+
+
+#Make a plot showing the average estimate of μ̂  on the y axis and the true value of μ on the x axis. Make a second plot (or overlay on the first) the average estimate of μ̂  only in samples for which the null was rejected on the y axis and the true value of μ on the x axis. Is the sample average of μ̂  across tests for which the null is rejected approximately equal to the true value of μ? Why or why not?
+
+```{r}
+
+est_sim = function(n = 30, mu = 0, sigma = 5) {
+  sim_df = tibble (
+    x = rnorm(n, mean = mu, sd = sigma)
+  )
+  
+  s_ttest = t.test(pull(sim_df,x), conf.int = 0.95) %>% broom::tidy() %>%
+    janitor::clean_names() %>%
+    select(p_value)
+  
+  
+  sim_df %>%
+  summarise(
+    mu_all = mean(x),
+    mu_reject = case_when(
+      pull(s_ttest, p_value) < 0.05 ~ mean(x),
+      pull(s_ttest, p_value) >= 0.05 ~ as.numeric("")
+    )
+  )
+}
+
+
+al_rej = function(set) {
+  out_u = vector("list", 5000)
+  for ( i in 1:5000) {
+    out_u[[i]] = est_sim(mu = set)
+    
+  }
+  
+  out_u %>% 
+    bind_rows() %>% 
+    summarise(
+      whole_samp = mean(mu_all, na.rm = T),
+      rejec_all = mean(mu_reject, na.rm = T)
+  )
+}
+
+u_mean = tibble(
+  mut = c(0, 1, 2, 3, 4, 5, 6),
+  h = map(mut, al_rej)
+) %>%
+  unnest(h) %>%
+  pivot_longer(
+    whole_samp:rejec_all,
+    names_to = "samples",
+    values_to = "average_estimate"
+    
+  )
+
+u_mean %>%
+  ggplot(aes(x = mut, y = average_estimate, group = samples)) + geom_point(aes(color = samples), alpha = 0.5, size = 2) + geom_smooth(aes(color = samples), alpha = 0.5, size = 0.5) + labs(x = "The True Value of μ", y = "The Average Estimate of μ Only in Samples for Which the Null Was Rejected", title = "Comparison of the Average Estimate of μ of All of the Samples and Reject-Null Sample")
+
+```
+
+Is the sample average of μ̂  across tests for which the null is rejected approximately equal to the true value of μ? Why or why not?
+
+When you look at the graph, the sample average of μ̂  across tests for which the null is rejected approximately equal to the true value of μ when the true value of μ reaches 4 because at the beginning of the graph when the true value of μ is 0, the average estimate of μ in samples for which the null hypothesis was rejected increases towards a value of 3.  
